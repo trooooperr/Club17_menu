@@ -1,9 +1,9 @@
 import mongoose from "mongoose";
 
-const MONGODB_URI = process.env.MONGODB_URI;
+const MONGODB_URI = process.env.POS_MONGODB_URI || process.env.MONGODB_URI;
 
-if (!MONGODB_URI) {
-  throw new Error("Please define the MONGODB_URI environment variable inside .env.local");
+if (!MONGODB_URI && process.env.NODE_ENV === "production") {
+  console.warn("[DB] Warning: POS_MONGODB_URI is not set in environment variables.");
 }
 
 /**
