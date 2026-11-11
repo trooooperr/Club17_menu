@@ -24,6 +24,7 @@ const lato = Lato({
 });
 
 export const metadata = {
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "https://menu.club17.com"),
   title: "CLUB 17 - Digital Menu",
   applicationName: "CLUB 17 Digital Menu",
   description: "Official digital menu for CLUB 17 Lounge & Bar, Gorakhpur. View handcrafted drinks, bar bites, main courses, and place orders directly from your table.",
