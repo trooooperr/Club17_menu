@@ -25,10 +25,33 @@ export async function GET(req) {
         isPOS = true;
       }
     } catch (posErr) {
-      console.warn("Failed to connect to POS database, falling back to local DB:", posErr.message);
+      console.warn("Failed to connect to POS database, checking POS API:", posErr.message);
     }
 
-    // If POS DB failed or empty, fetch from local DB
+    // If POS DB direct connection failed, fetch from live POS public API
+    if (!isPOS) {
+      try {
+        const posApiUrl = process.env.NEXT_PUBLIC_POS_SOCKET_URL || "https://club17.onrender.com";
+        const posRes = await fetch(`${posApiUrl}/api/public/menu`, {
+          cache: "no-store",
+          headers: { "Accept": "application/json" }
+        });
+        if (posRes.ok) {
+          const posData = await posRes.json();
+          if (posData?.success && (posData.menuItems?.length > 0 || posData.inventories?.length > 0)) {
+            rawMenuItems = posData.menuItems || [];
+            rawInventories = posData.inventories || [];
+            inventoryCategories = posData.inventoryCategories || [];
+            menuCategories = posData.menuCategories || [];
+            isPOS = true;
+          }
+        }
+      } catch (apiErr) {
+        console.warn("Failed to fetch menu from POS public API:", apiErr.message);
+      }
+    }
+
+    // If both POS DB and POS API failed or empty, fetch from local DB
     if (!isPOS) {
       await dbConnect();
       await seedMenuItemsIfNeeded();
@@ -254,9 +277,7 @@ export async function GET(req) {
       },
       {
         headers: {
-          "Cache-Control": "no-store, no-cache, must-revalidate, proxy-revalidate",
-          "Pragma": "no-cache",
-          "Expires": "0"
+          "Cache-Control": "public, s-maxage=30, stale-while-revalidate=120"
         }
       }
     );

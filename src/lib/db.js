@@ -71,9 +71,20 @@ if (!posCached) {
 }
 
 export async function posDbConnect() {
-  const POS_MONGODB_URI = process.env.POS_MONGODB_URI || process.env.MONGODB_URI;
-  if (!POS_MONGODB_URI) {
+  let uri = process.env.POS_MONGODB_URI || process.env.MONGODB_URI;
+  if (!uri) {
     throw new Error("POS_MONGODB_URI environment variable is not defined");
+  }
+
+  // Ensure URI targets the club17 database if none or test is specified
+  if (uri.includes("/test?")) {
+    uri = uri.replace("/test?", "/club17?");
+  } else if (uri.endsWith("/test")) {
+    uri = uri.replace(/\/test$/, "/club17");
+  } else if (!uri.match(/mongodb(\+srv)?:\/\/[^/]+\/[a-zA-Z0-9_-]+/)) {
+    uri = uri.replace(/(mongodb(?:\+srv)?:\/\/[^/?]+)(\/?)(\?.*)?$/, (m, host, slash, query) => {
+      return `${host}/club17${query || ''}`;
+    });
   }
 
   if (posCached.conn) {
@@ -83,9 +94,12 @@ export async function posDbConnect() {
   if (!posCached.promise) {
     const opts = {
       bufferCommands: false,
+      serverSelectionTimeoutMS: 6000,
+      connectTimeoutMS: 6000,
+      maxPoolSize: 5
     };
 
-    posCached.promise = mongoose.createConnection(POS_MONGODB_URI, opts).asPromise().then((conn) => {
+    posCached.promise = mongoose.createConnection(uri, opts).asPromise().then((conn) => {
       return conn;
     });
   }

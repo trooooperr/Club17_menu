@@ -576,12 +576,12 @@ function MenuContent() {
     return ["All", ...cats];
   })();
 
-  // Default selectedSubCategory to first category when availableCategoriesForTab loads/changes
+  // Ensure selectedSubCategory remains valid if categories change
   useEffect(() => {
     if (availableCategoriesForTab.length > 0) {
       const lowerCats = availableCategoriesForTab.map(c => c.toLowerCase().trim());
-      if (selectedSubCategory === "all" || !lowerCats.includes(selectedSubCategory.toLowerCase().trim())) {
-        setSelectedSubCategory(availableCategoriesForTab[0]);
+      if (selectedSubCategory !== "all" && !lowerCats.includes(selectedSubCategory.toLowerCase().trim())) {
+        setSelectedSubCategory("all");
       }
     }
   }, [availableCategoriesForTab, selectedSubCategory]);
