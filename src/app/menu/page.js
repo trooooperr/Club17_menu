@@ -16,6 +16,10 @@ const formatPrice = (priceVal) => {
 function MenuContent() {
   const searchParams = useSearchParams();
   const tableParam = searchParams.get("table");
+  const floorParam = searchParams.get("floor");
+  const floor = ["maaistaa", "club", "rooftop"].includes(floorParam?.toLowerCase())
+    ? floorParam.toLowerCase()
+    : "club";
   const [tableNumber, setTableNumber] = useState(null);
 
   // Bottom Nav Tabs: "kitchen", "bar", "cart", "history"
@@ -23,6 +27,8 @@ function MenuContent() {
   
   // State for menu items
   const [menuItems, setMenuItems] = useState([]);
+  const [foodCategories, setFoodCategories] = useState([]);
+  const [drinkCategories, setDrinkCategories] = useState([]);
   const [inventoryCategories, setInventoryCategories] = useState([]);
   const [menuCategories, setMenuCategories] = useState([]);
   const [loadingMenu, setLoadingMenu] = useState(true);
@@ -135,15 +141,17 @@ function MenuContent() {
   // Fetch Menu Items from Server
   const fetchMenu = async () => {
     try {
-      const res = await fetch(`/api/menu?t=${Date.now()}`, { cache: "no-store" });
+      const res = await fetch(`/api/menu?floor=${floor}&t=${Date.now()}`, { cache: "no-store" });
       const data = await res.json();
       if (data.success) {
         const fetchedItems = (data.menuItems || []).filter(
           (item) => !(item.name && item.name.toUpperCase() === "CLR")
         );
         setMenuItems(fetchedItems);
-        setInventoryCategories(data.inventoryCategories || []);
-        setMenuCategories(data.menuCategories || []);
+        setFoodCategories(data.foodCategories || data.menuCategories || []);
+        setDrinkCategories(data.drinkCategories || data.inventoryCategories || []);
+        setInventoryCategories(data.drinkCategories || data.inventoryCategories || []);
+        setMenuCategories(data.foodCategories || data.menuCategories || []);
 
         // Sanitize cart: remove out of stock items or adjust quantities dynamically
         setCart((prevCart) => {
@@ -514,6 +522,7 @@ function MenuContent() {
           tableNumber,
           customerName,
           customerMobile,
+          floor,
           items: cart
         })
       });
@@ -549,7 +558,9 @@ function MenuContent() {
   const availableCategoriesForTab = (() => {
     let cats = [];
     if (activeTab === "kitchen") {
-      if (menuCategories && menuCategories.length > 0) {
+      if (foodCategories && foodCategories.length > 0) {
+        cats = foodCategories;
+      } else if (menuCategories && menuCategories.length > 0) {
         cats = Array.from(new Set(menuCategories.map(c => c.trim()).filter(Boolean)));
       } else {
         cats = Array.from(
@@ -558,10 +569,12 @@ function MenuContent() {
               .filter(item => item.menuSection === "kitchen")
               .map(item => item.category)
           )
-        ).filter(Boolean).sort();
+        ).filter(Boolean);
       }
     } else {
-      if (inventoryCategories && inventoryCategories.length > 0) {
+      if (drinkCategories && drinkCategories.length > 0) {
+        cats = drinkCategories;
+      } else if (inventoryCategories && inventoryCategories.length > 0) {
         cats = Array.from(new Set(inventoryCategories.map(c => c.trim()).filter(Boolean)));
       } else {
         cats = Array.from(
@@ -570,7 +583,7 @@ function MenuContent() {
               .filter(item => item.menuSection === "bar")
               .map(item => item.category)
           )
-        ).filter(Boolean).sort();
+        ).filter(Boolean);
       }
     }
     return ["All", ...cats];
@@ -763,15 +776,19 @@ function MenuContent() {
       <header style={styles.header} className="menu-header">
         <div style={styles.headerTop}>
           <div style={styles.restaurantInfo}>
-            <img src="/logo.png" alt="CLUB 17 Logo" style={{ width: "38px", height: "38px", borderRadius: "50%", objectFit: "contain", background: "none" }} />
+            <img src="/logo.png" alt="Logo" style={{ width: "38px", height: "38px", borderRadius: "50%", objectFit: "contain", background: "none" }} />
             <div>
-              <h1 style={styles.brandTitle} className="brand-title">CLUB 17</h1>
-              <p style={styles.brandSubtitle} className="brand-subtitle">DIGITAL MENU</p>
+              <h1 style={styles.brandTitle} className="brand-title">
+                {floor === 'maaistaa' ? 'MAAISTAA' : floor === 'rooftop' ? 'ROOFTOP 17' : 'CLUB 17'}
+              </h1>
+              <p style={styles.brandSubtitle} className="brand-subtitle">
+                {floor === 'maaistaa' ? 'FINE DINING & RESTAURANT' : floor === 'rooftop' ? 'OPEN AIR & SKY DECK' : 'LOUNGE & BAR'}
+              </p>
             </div>
           </div>
           <div style={styles.tableBadge} className="table-badge">
-            <span style={styles.tableLabel} className="table-label">TABLE</span>
-            <span style={styles.tableNumVal} className="table-num-val">{tableNumber || "—"}</span>
+            <span style={styles.tableLabel} className="table-label">{floor.toUpperCase()}</span>
+            <span style={styles.tableNumVal} className="table-num-val">TABLE {tableNumber || "—"}</span>
           </div>
         </div>
         

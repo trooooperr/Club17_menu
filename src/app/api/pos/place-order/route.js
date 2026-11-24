@@ -74,6 +74,7 @@ export async function POST(req) {
   try {
     const body = await req.json();
     const { tableNumber, customerName, customerMobile, items } = body;
+    const orderFloor = ["maaistaa", "club", "rooftop"].includes(body.floor?.toLowerCase()) ? body.floor.toLowerCase() : "club";
 
     const hasClearItem = (items || []).some(
       item => (item.name || "").toLowerCase().trim() === "clear" || (item.name || "").toLowerCase().trim() === "clear table"
@@ -171,6 +172,7 @@ export async function POST(req) {
         billNo: "",
         businessDate: getISTBusinessDateStr(),
         tableNo: tableNum,
+        floor: orderFloor,
         items: [],
         subtotal: 0,
         sgst: 0,
@@ -196,6 +198,7 @@ export async function POST(req) {
 
       const sessionInsert = await conn.db.collection("tablesessions").insertOne({
         tableNo: tableNum,
+        floor: orderFloor,
         activeOrderId: activeOrderId,
         status: "OPEN",
         kotIds: [],
@@ -355,6 +358,7 @@ export async function POST(req) {
       kotNo,
       orderId: order._id,
       tableNo: tableNum,
+      floor: orderFloor,
       items: kotItems,
       status: 'PENDING',
       notes: '',

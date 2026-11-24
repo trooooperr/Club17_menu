@@ -4,10 +4,15 @@ import { seedMenuItemsIfNeeded } from "@/lib/seed";
 
 export async function GET(req) {
   try {
+    const { searchParams } = new URL(req.url);
+    const rawFloor = (searchParams.get("floor") || "").toLowerCase().trim();
+    const floor = ["maaistaa", "club", "rooftop"].includes(rawFloor) ? rawFloor : "club";
+
     let rawMenuItems = [];
     let rawInventories = [];
     let inventoryCategories = [];
     let menuCategories = [];
+    let floorConfig = {};
     let isPOS = false;
 
     try {
@@ -19,8 +24,9 @@ export async function GET(req) {
       ]);
       rawMenuItems = menuRes || [];
       rawInventories = invRes || [];
+      floorConfig = settingsRes?.floorConfig || {};
       inventoryCategories = settingsRes?.inventoryCategories || [];
-      menuCategories = settingsRes?.menuCategories || [];
+      menuCategories = floorConfig?.[floor]?.menuCategories || settingsRes?.menuCategories || [];
       if (rawMenuItems.length > 0 || rawInventories.length > 0) {
         isPOS = true;
       }
@@ -32,7 +38,7 @@ export async function GET(req) {
     if (!isPOS) {
       try {
         const posApiUrl = process.env.NEXT_PUBLIC_POS_SOCKET_URL || "https://club17.onrender.com";
-        const posRes = await fetch(`${posApiUrl}/api/public/menu`, {
+        const posRes = await fetch(`${posApiUrl}/api/public/menu?floor=${floor}`, {
           cache: "no-store",
           headers: { "Accept": "application/json" }
         });
@@ -42,7 +48,7 @@ export async function GET(req) {
             rawMenuItems = posData.menuItems || [];
             rawInventories = posData.inventories || [];
             inventoryCategories = posData.inventoryCategories || [];
-            menuCategories = posData.menuCategories || [];
+            menuCategories = posData.floorConfig?.[floor]?.menuCategories || posData.menuCategories || [];
             isPOS = true;
           }
         }
@@ -51,7 +57,7 @@ export async function GET(req) {
       }
     }
 
-    // If both POS DB and POS API failed or empty, fetch from local DB
+    // If both POS DB and POS API failed or empty, fallback
     if (!isPOS) {
       await dbConnect();
       await seedMenuItemsIfNeeded();
@@ -62,32 +68,32 @@ export async function GET(req) {
           return nameLower !== "clear" && nameLower !== "clear table";
         })
         .map(item => {
-        // Price conversion
-        const cleanPrice = parseFloat(item.price.toString().replace(/[^0-9.]/g, "")) || 0;
-        let rawCat = (item.category || "").toLowerCase().trim();
-        if (rawCat === "desserts" || rawCat === "dessert") {
-          rawCat = "bar_bites";
-        }
-        const menuSection = rawCat === "drinks" ? "bar" : "kitchen";
-        return {
-          _id: item._id.toString(),
-          name: item.name,
-          desc: item.desc,
-          price: cleanPrice, // Number amount only
-          tag: item.tag || "",
-          badge: item.badge || "",
-          category: rawCat,
-          menuSection,
-          createdAt: item.createdAt
-        };
-      });
+          const cleanPrice = parseFloat(item.price.toString().replace(/[^0-9.]/g, "")) || 0;
+          let rawCat = (item.category || "").toLowerCase().trim();
+          const isDrink = rawCat === "drinks" || rawCat === "beverages";
+          return {
+            _id: item._id.toString(),
+            name: item.name,
+            desc: item.desc,
+            price: cleanPrice,
+            tag: item.tag || "",
+            badge: item.badge || "",
+            category: item.category || "General",
+            menuSection: isDrink ? "bar" : "kitchen",
+            department: isDrink ? "bar" : "kitchen",
+            createdAt: item.createdAt
+          };
+        });
       return NextResponse.json(
         { 
           success: true, 
+          floor,
           menuItems, 
           source: "local",
-          inventoryCategories: ["drinks"],
-          menuCategories: ["starters", "bar_bites"]
+          foodCategories: ["Starters", "Mains"],
+          drinkCategories: ["Drinks"],
+          menuCategories: ["Starters", "Mains"],
+          inventoryCategories: ["Drinks"]
         },
         {
           headers: {
@@ -111,7 +117,6 @@ export async function GET(req) {
       }
     }
 
-    // Helper function to check if item or its parent is enabled via manager toggle
     function isItemActive(inv) {
       if (!inv) return false;
       if (inv.isAvailable === false || inv.available === false) return false;
@@ -127,7 +132,6 @@ export async function GET(req) {
       return true;
     }
 
-    // Helper function to calculate effective portion/unit stock for menu ordering
     function getEffectiveStock(inv) {
       if (!inv) return 0;
       if (inv.trackStock === false) return undefined;
@@ -152,116 +156,151 @@ export async function GET(req) {
       return 0;
     }
 
-    const trimmedMenuCats = (menuCategories || []).map(c => c.trim().toLowerCase());
-    const trimmedInvCats = (inventoryCategories || []).map(c => c.trim().toLowerCase());
-    const trimmedInvCatsSet = new Set(trimmedInvCats);
+    const isDrinkCategory = (catName = "") => {
+      const c = catName.toLowerCase().trim();
+      return /drink|beverage|juice|cocktail|beer|shake|soda|coffee|tea|wine|liquor|whisky|vodka|rum|mocktail|spirits/i.test(c);
+    };
 
-    // ── Build Drinks / Bar Items directly from rawInventories ──
-    // Inventory is the sole source of truth for all bar items (prices, stock, drag-and-drop order)
+    const orderedFloorCategories = (menuCategories || []).map(c => c.trim()).filter(Boolean);
+
+    // ── Build Drinks / Bar Items ──
     const barItems = [];
     const invNamesSet = new Set();
 
-    for (const inv of rawInventories) {
-      if (!inv.name) continue;
-      const cleanName = inv.name.trim();
-      const invNameLower = cleanName.toLowerCase();
-      if (invNameLower === "clear" || invNameLower === "clear table") continue;
-      invNamesSet.add(invNameLower);
+    // Bar & Liquor inventory is ONLY included for Club floor!
+    if (floor === "club") {
+      for (const inv of rawInventories) {
+        if (!inv.name) continue;
+        const cleanName = inv.name.trim();
+        const invNameLower = cleanName.toLowerCase();
+        if (invNameLower === "clear" || invNameLower === "clear table") continue;
+        invNamesSet.add(invNameLower);
 
-      if (!isItemActive(inv)) continue;
+        if (!isItemActive(inv)) continue;
 
-      const effectiveStock = getEffectiveStock(inv);
-      // Hide out-of-stock items from the customer menu
-      if (inv.trackStock !== false && effectiveStock !== undefined && effectiveStock <= 0) {
-        continue;
-      }
-
-      const cleanPrice = parseFloat((inv.price || 0).toString().replace(/[^0-9.]/g, "")) || 0;
-      const isAlcohol = inv.isAlcoholic || inv.isAlcohol || false;
-
-      barItems.push({
-        _id: inv._id ? inv._id.toString() : `inv_${invNameLower}`,
-        name: cleanName,
-        desc: inv.desc || cleanName,
-        price: cleanPrice,
-        tag: inv.category || "drinks",
-        badge: isAlcohol ? "Alcoholic" : "Non-Alcoholic",
-        category: inv.category ? inv.category.trim() : "Drinks",
-        menuSection: "bar",
-        stock: effectiveStock,
-        trackStock: inv.trackStock !== false,
-        order: typeof inv.order === "number" ? inv.order : 0,
-        department: "bar",
-        createdAt: inv.createdAt || new Date()
-      });
-    }
-
-    // ── Build Food / Kitchen Items from rawMenuItems ──
-    // Exclude any item that belongs to inventory or inventory categories (prevents stale drink duplicates)
-    const kitchenItems = rawMenuItems
-      .filter(item => {
-        if (item.available === false) return false;
-        if (item.trackStock !== false && typeof item.stock === "number" && item.stock <= 0) return false;
-        const nameLower = (item.name || "").toLowerCase().trim();
-        if (nameLower === "clear" || nameLower === "clear table") return false;
-        if (invNamesSet.has(nameLower)) return false; // Managed in inventory
-
-        const rawCat = (item.category || "").toLowerCase().trim();
-        if (trimmedInvCatsSet.has(rawCat)) return false; // Belongs to bar inventory categories
-
-        // If department is bar and not in menuCategories (e.g. Soft Beverages/Shakes), skip
-        if (item.department === "bar" && !trimmedMenuCats.includes(rawCat)) {
-          return false;
+        const effectiveStock = getEffectiveStock(inv);
+        if (inv.trackStock !== false && effectiveStock !== undefined && effectiveStock <= 0) {
+          continue;
         }
 
-        return true;
-      })
-      .map(item => {
-        const rawCat = (item.category || "").toLowerCase().trim();
-        const trimmedMenuCategories = (menuCategories || []).map(c => c.trim()).filter(Boolean);
-        const matchedCategory = trimmedMenuCategories.find(c => c.toLowerCase() === rawCat) || item.category?.trim() || "Mains";
+        const cleanPrice = parseFloat((inv.price || 0).toString().replace(/[^0-9.]/g, "")) || 0;
+        const isAlcohol = inv.isAlcoholic || inv.isAlcohol || false;
 
-        const cleanPrice = parseFloat((item.price || 0).toString().replace(/[^0-9.]/g, "")) || 0;
-
-        return {
-          _id: item._id.toString(),
-          name: item.name.trim(),
-          desc: item.desc || `${item.name.trim()} prepared fresh.`,
+        barItems.push({
+          _id: inv._id ? inv._id.toString() : `inv_${invNameLower}`,
+          name: cleanName,
+          desc: inv.desc || cleanName,
           price: cleanPrice,
-          tag: item.tag || item.category || "",
+          tag: inv.category || "drinks",
+          badge: isAlcohol ? "Alcoholic" : "Non-Alcoholic",
+          category: inv.category ? inv.category.trim() : "Drinks",
+          menuSection: "bar",
+          stock: effectiveStock,
+          trackStock: inv.trackStock !== false,
+          order: typeof inv.order === "number" ? inv.order : 0,
+          department: "bar",
+          createdAt: inv.createdAt || new Date()
+        });
+      }
+    }
+
+    // ── Process rawMenuItems filtered by Floor ──
+    const kitchenItems = [];
+
+    for (const item of rawMenuItems) {
+      if (!item.name) continue;
+      const cleanName = item.name.trim();
+      const nameLower = cleanName.toLowerCase();
+      if (nameLower === "clear" || nameLower === "clear table") continue;
+      if (item.available === false) continue;
+      if (item.trackStock !== false && typeof item.stock === "number" && item.stock <= 0) continue;
+
+      // Filter by floor
+      const itemFloors = Array.isArray(item.floors) && item.floors.length > 0 ? item.floors : ["maaistaa", "club", "rooftop"];
+      if (!itemFloors.includes(floor)) continue;
+
+      // If on club and item matches an inventory item, inventory takes precedence
+      if (floor === "club" && invNamesSet.has(nameLower)) continue;
+
+      // Resolve floor dynamic price
+      const floorPrice = item.floorPrices?.[floor];
+      const effectivePrice = (floorPrice !== undefined && floorPrice !== null && !isNaN(floorPrice) && Number(floorPrice) > 0)
+        ? Number(floorPrice)
+        : (parseFloat(item.price) || 0);
+
+      const itemCategory = item.category?.trim() || "General";
+      const isDrink = item.department === "bar" || isDrinkCategory(itemCategory);
+
+      if (isDrink) {
+        barItems.push({
+          _id: item._id.toString(),
+          name: cleanName,
+          desc: item.desc || `${cleanName} prepared fresh.`,
+          price: effectivePrice,
+          tag: item.tag || itemCategory,
+          badge: item.isAlcoholic ? "Alcoholic" : "Non-Alcoholic",
+          category: itemCategory,
+          menuSection: "bar",
+          stock: typeof item.stock === "number" ? item.stock : undefined,
+          trackStock: item.trackStock !== false,
+          order: typeof item.order === "number" ? item.order : 0,
+          department: "bar",
+          createdAt: item.createdAt || new Date()
+        });
+      } else {
+        kitchenItems.push({
+          _id: item._id.toString(),
+          name: cleanName,
+          desc: item.desc || `${cleanName} prepared fresh.`,
+          price: effectivePrice,
+          tag: item.tag || itemCategory,
           badge: item.isVeg === false ? "Non-Veg" : "Veg",
-          category: matchedCategory,
+          category: itemCategory,
           menuSection: "kitchen",
           stock: typeof item.stock === "number" ? item.stock : undefined,
           trackStock: item.trackStock !== false,
           order: typeof item.order === "number" ? item.order : 0,
           department: "kitchen",
           createdAt: item.createdAt || new Date()
-        };
-      });
+        });
+      }
+    }
 
-    // ── Sort kitchen & bar items ──
+    // ── Extract categories in preserved floor order ──
+    const foodCatSet = new Set(kitchenItems.map(i => i.category));
+    const foodCategories = orderedFloorCategories.filter(c => foodCatSet.has(c));
+    for (const c of foodCatSet) {
+      if (!foodCategories.includes(c)) foodCategories.push(c);
+    }
+
+    const drinkCatSet = new Set(barItems.map(i => i.category));
+    const drinkCategories = orderedFloorCategories.filter(c => drinkCatSet.has(c));
+    for (const c of drinkCatSet) {
+      if (!drinkCategories.includes(c)) drinkCategories.push(c);
+    }
+
+    // ── Sort kitchen & bar items by category order, then item order ──
     kitchenItems.sort((a, b) => {
-      const catAIndex = trimmedMenuCats.indexOf(a.category.toLowerCase());
-      const catBIndex = trimmedMenuCats.indexOf(b.category.toLowerCase());
-      const indexA = catAIndex === -1 ? 999999 : catAIndex;
-      const indexB = catBIndex === -1 ? 999999 : catBIndex;
-      if (indexA !== indexB) return indexA - indexB;
-      const orderA = typeof a.order === "number" ? a.order : 0;
-      const orderB = typeof b.order === "number" ? b.order : 0;
-      if (orderA !== orderB) return orderA - orderB;
+      const idxA = foodCategories.indexOf(a.category);
+      const idxB = foodCategories.indexOf(b.category);
+      const posA = idxA === -1 ? 999999 : idxA;
+      const posB = idxB === -1 ? 999999 : idxB;
+      if (posA !== posB) return posA - posB;
+      const ordA = typeof a.order === "number" ? a.order : 0;
+      const ordB = typeof b.order === "number" ? b.order : 0;
+      if (ordA !== ordB) return ordA - ordB;
       return a.name.localeCompare(b.name);
     });
 
     barItems.sort((a, b) => {
-      const catAIndex = trimmedInvCats.indexOf(a.category.toLowerCase());
-      const catBIndex = trimmedInvCats.indexOf(b.category.toLowerCase());
-      const indexA = catAIndex === -1 ? 999999 : catAIndex;
-      const indexB = catBIndex === -1 ? 999999 : catBIndex;
-      if (indexA !== indexB) return indexA - indexB;
-      const orderA = typeof a.order === "number" ? a.order : 0;
-      const orderB = typeof b.order === "number" ? b.order : 0;
-      if (orderA !== orderB) return orderA - orderB;
+      const idxA = drinkCategories.indexOf(a.category);
+      const idxB = drinkCategories.indexOf(b.category);
+      const posA = idxA === -1 ? 999999 : idxA;
+      const posB = idxB === -1 ? 999999 : idxB;
+      if (posA !== posB) return posA - posB;
+      const ordA = typeof a.order === "number" ? a.order : 0;
+      const ordB = typeof b.order === "number" ? b.order : 0;
+      if (ordA !== ordB) return ordA - ordB;
       return a.name.localeCompare(b.name);
     });
 
@@ -270,14 +309,17 @@ export async function GET(req) {
     return NextResponse.json(
       { 
         success: true, 
+        floor,
         menuItems, 
-        source: "pos",
-        inventoryCategories,
-        menuCategories
+        foodCategories,
+        drinkCategories,
+        menuCategories: foodCategories,
+        inventoryCategories: drinkCategories,
+        source: "pos"
       },
       {
         headers: {
-          "Cache-Control": "public, s-maxage=30, stale-while-revalidate=120"
+          "Cache-Control": "public, s-maxage=10, stale-while-revalidate=60"
         }
       }
     );
